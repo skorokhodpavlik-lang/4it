@@ -1,0 +1,93 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database
+  db:
+    image: postgres:15-alpine
+    container_name: bablo_db
+    environment:
+      POSTGRES_USER: crypto_user
+      POSTGRES_PASSWORD: crypto_password
+      POSTGRES_DB: crypto_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U crypto_user"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - bablo-network
+
+  # Redis для кэша
+  redis:
+    image: redis:7-alpine
+    container_name: bablo_redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - bablo-network
+
+  # Ollama для локальных AI моделей
+  ollama:
+    image: ollama/ollama:latest
+    container_name: bablo_ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    networks:
+      - bablo-network
+    command: serve
+
+  # Backend FastAPI
+  backend:
+    build: ./backend
+    container_name: bablo_backend
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: postgresql://crypto_user:crypto_password@db:5432/crypto_db
+      REDIS_URL: redis://redis:6379
+      OLLAMA_BASE_URL: http://ollama:11434
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      ollama:
+        condition: service_started
+    volumes:
+      - ./backend:/app
+    networks:
+      - bablo-network
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+
+  # Frontend React
+  frontend:
+    build: ./frontend
+    container_name: bablo_frontend
+    ports:
+      - "3000:3000"
+    environment:
+      REACT_APP_API_URL: http://localhost:8000/api
+    depends_on:
+      - backend
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    networks:
+      - bablo-network
+
+volumes:
+  postgres_data:
+  redis_data:
+  ollama_data:
+
+networks:
+  bablo-network:
+    driver: bridge
